@@ -38,6 +38,10 @@
             </td>
           </tr>
           <tr>
+            <td>Enable Blur</td>
+            <td><input type="checkbox" data-bind="checked: enableBlur" /></td>
+          </tr>
+          <tr>
             <td>Intensity</td>
             <td>
               <input
@@ -50,50 +54,26 @@
             </td>
           </tr>
           <tr>
-            <td>Length Cap</td>
-            <td>
-              <input
-                type="range"
-                min="0"
-                max="1"
-                step="0.01"
-                data-bind="value: lengthCap, valueUpdate: 'input'"
-              />
-            </td>
-          </tr>
-          <tr>
-            <td>Step Count</td>
+            <td>Kernel Radius</td>
             <td>
               <input
                 type="range"
                 min="1"
                 max="64"
                 step="1"
-                data-bind="value: stepCount, valueUpdate: 'input'"
+                data-bind="value: kernelRadius, valueUpdate: 'input'"
               />
             </td>
           </tr>
           <tr>
-            <td>Direction Count</td>
+            <td>Kernel Size</td>
             <td>
               <input
                 type="range"
                 min="1"
-                max="16"
+                max="512"
                 step="1"
-                data-bind="value: directionCount, valueUpdate: 'input'"
-              />
-            </td>
-          </tr>
-          <tr>
-            <td>Bias</td>
-            <td>
-              <input
-                type="range"
-                min="0"
-                max="1"
-                step="0.01"
-                data-bind="value: bias, valueUpdate: 'input'"
+                data-bind="value: KERNEL_SIZE, valueUpdate: 'input'"
               />
             </td>
           </tr>
@@ -121,11 +101,10 @@
         const viewModel = {
           show: true,
           ambientOcclusionOnly: false,
-          intensity: 3.0,
-          bias: 0.1,
-          lengthCap: 0.26,
-          directionCount: 8,
-          stepCount: 32,
+          intensity: 1.5,
+          kernelRadius: 8,
+          KERNEL_SIZE: 256,
+          enableBlur: true,
         };
 
         Cesium.knockout.track(viewModel);
@@ -145,10 +124,10 @@
             viewModel.ambientOcclusionOnly,
           );
           ambientOcclusion.uniforms.intensity = Number(viewModel.intensity);
-          ambientOcclusion.uniforms.bias = Number(viewModel.bias);
-          ambientOcclusion.uniforms.lengthCap = Number(viewModel.lengthCap);
-          ambientOcclusion.uniforms.directionCount = Number(viewModel.directionCount);
-          ambientOcclusion.uniforms.stepCount = Number(viewModel.stepCount);
+          ambientOcclusion.uniforms.kernelRadius = Number(viewModel.kernelRadius);
+          ambientOcclusion.uniforms.KERNEL_SIZE = Number(viewModel.KERNEL_SIZE);
+          ambientOcclusion.uniforms.enableBlur = Boolean(viewModel.enableBlur);
+
         }
         updatePostProcess();
 

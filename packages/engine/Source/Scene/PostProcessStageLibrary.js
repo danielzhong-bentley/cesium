@@ -498,12 +498,10 @@ PostProcessStageLibrary.createAmbientOcclusionStage = function () {
     name: "czm_ambient_occlusion_generate",
     fragmentShader: AmbientOcclusionGenerate,
     uniforms: {
-      intensity: 3.0,
-      bias: 0.1,
-      lengthCap: 0.26,
-      directionCount: 8,
-      stepCount: 32,
-      randomTexture: undefined,
+      intensity: 1.5,
+      kernelRadius: 8,
+      KERNEL_SIZE: 256,
+      randomTexture: buildModuleUrl("Assets/Textures/BlueNoise.png"),
     },
   });
 
@@ -512,6 +510,8 @@ PostProcessStageLibrary.createAmbientOcclusionStage = function () {
     fragmentShader: AmbientOcclusionModulate,
     uniforms: {
       ambientOcclusionOnly: false,
+      enableBlur: true,
+      noiseTexture: buildModuleUrl("Assets/Textures/BlueNoise.png"),
       ambientOcclusionTexture: generate.name,
     },
   });
@@ -526,36 +526,20 @@ PostProcessStageLibrary.createAmbientOcclusionStage = function () {
         generate.uniforms.intensity = value;
       },
     },
-    bias: {
+    kernelRadius: {
       get: function () {
-        return generate.uniforms.bias;
+        return generate.uniforms.kernelRadius;
       },
       set: function (value) {
-        generate.uniforms.bias = value;
+        generate.uniforms.kernelRadius = value;
       },
     },
-    lengthCap: {
+    KERNEL_SIZE: {
       get: function () {
-        return generate.uniforms.lengthCap;
+        return generate.uniforms.KERNEL_SIZE;
       },
       set: function (value) {
-        generate.uniforms.lengthCap = value;
-      },
-    },
-    directionCount: {
-      get: function () {
-        return generate.uniforms.directionCount;
-      },
-      set: function (value) {
-        generate.uniforms.directionCount = value;
-      },
-    },
-    stepCount: {
-      get: function () {
-        return generate.uniforms.stepCount;
-      },
-      set: function (value) {
-        generate.uniforms.stepCount = value;
+        generate.uniforms.KERNEL_SIZE = value;
       },
     },
     randomTexture: {
@@ -566,12 +550,28 @@ PostProcessStageLibrary.createAmbientOcclusionStage = function () {
         generate.uniforms.randomTexture = value;
       },
     },
+    noiseTexture: {
+      get: function () {
+        return ambientOcclusionModulate.uniforms.noiseTexture;
+      },
+      set: function (value) {
+        ambientOcclusionModulate.uniforms.noiseTexture = value;
+      },
+    },
     ambientOcclusionOnly: {
       get: function () {
         return ambientOcclusionModulate.uniforms.ambientOcclusionOnly;
       },
       set: function (value) {
         ambientOcclusionModulate.uniforms.ambientOcclusionOnly = value;
+      },
+    },
+    enableBlur: {
+      get: function () {
+        return ambientOcclusionModulate.uniforms.enableBlur;
+      },
+      set: function (value) {
+        ambientOcclusionModulate.uniforms.enableBlur = value;
       },
     },
   });
@@ -814,7 +814,7 @@ PostProcessStageLibrary.createLensFlareStage = function () {
     uniforms: {
       dirtTexture: buildModuleUrl("Assets/Textures/LensFlare/DirtMask.jpg"),
       starTexture: buildModuleUrl("Assets/Textures/LensFlare/StarBurst.jpg"),
-      intensity: 2.0,
+      intensity: 1.5,
       distortion: 10.0,
       ghostDispersal: 0.4,
       haloWidth: 0.4,

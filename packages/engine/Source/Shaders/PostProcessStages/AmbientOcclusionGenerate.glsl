@@ -3,10 +3,29 @@ precision highp float;
 uniform sampler2D randomTexture;
 uniform sampler2D depthTexture;
 uniform float intensity;
-uniform float bias;
-uniform float lengthCap;
-uniform int stepCount;
-uniform int directionCount;
+uniform int kernelRadius;
+uniform int KERNEL_SIZE;
+
+vec3 generateSampleKernel(int index, int kernelSize) {
+    float u1 = fract(sin(float(index) * 12.9898) * 43758.5453); // Pseudo-random using sin/hash
+    float u2 = fract(sin(float(index) * 78.233) * 12345.6789);
+
+    float r = sqrt(u1);                // Radius
+    float theta = 2.0 * 3.1415926 * u2; // Angle
+
+    vec3 kernelSample;
+    kernelSample.x = r * cos(theta);
+    kernelSample.y = r * sin(theta);
+    kernelSample.z = sqrt(1.0 - u1); // Project to hemisphere
+
+    // Scale the kernelSample so closer kernelSample contribute more
+    float scale = float(index + 1) / float(kernelSize);
+    scale = scale * scale; // Non-linear falloff
+    kernelSample *= scale;
+
+    return kernelSample;
+}
+
 
 vec4 pixelToEye(vec2 screenCoordinate)
 {
@@ -22,8 +41,38 @@ vec4 pixelToEye(vec2 screenCoordinate)
     return posEC;
 }
 
+float getDepth(vec2 screenPosition) {
+    vec2 uv = screenPosition / czm_viewport.zw;
+    float depth = czm_readDepth(depthTexture, uv);
+    return clamp(depth, 0.0, 1.0);
+}
+
+float getViewZ(float depth) {
+    vec2 uv = gl_FragCoord.xy / czm_viewport.zw;
+    vec2 xy = 2.0 * uv - vec2(1.0);
+    vec4 clipPosition = vec4(xy, depth, 1.0);
+    vec4 viewPosition = czm_inverseProjection * clipPosition; // Unproject to view space
+    return viewPosition.z / viewPosition.w;
+}
+
+vec2 projectCameraPositionToScreenSpace(vec3 cameraPosition) {
+    vec4 clipPosition = czm_projection * vec4(cameraPosition, 1.0);
+    vec3 ndc = clipPosition.xyz / clipPosition.w; // Normalized Device Coordinates
+    return vec2(0.5) * (ndc.xy + vec2(1.0)); // Convert NDC to UV coordinates (0 to 1 range)
+}
+
+vec3 sampleDepthToCameraPosition(vec2 uv, float depth) {
+    // Calculate the view-space Z coordinate using the provided depth
+    float viewZ = getViewZ(depth);
+    
+    // Reuse pixelToEye for the full view-space position reconstruction
+    vec4 viewPosition = pixelToEye(uv * czm_viewport.zw);
+
+    return viewPosition.xyz; // Return the view-space position
+}
+
 // Reconstruct surface normal in eye coordinates, avoiding edges
-vec3 getNormalXEdge(vec3 positionEC)
+vec3 getNormalXEdge(vec3 positionEC) //getViewNormal
 {
     // Find the 3D surface positions at adjacent screen pixels
     vec2 centerCoord = gl_FragCoord.xy;
@@ -52,93 +101,94 @@ float gaussian(float x, float standardDeviation) {
     return exp(-0.5 * argument * argument) / (sqrtTwoPi * standardDeviation);
 }
 
+vec3 debugOcclusionColor(float occlusion) {
+			if (occlusion < 0.2) {
+				return vec3(0.0, 1.0, 0.0); // green for low occlusion
+			} else if (occlusion < 0.4) {
+				return vec3(0.0, 0.0, 1.0); // blue for medium-low occlusion
+			} else if (occlusion < 0.6) {
+				return vec3(1.0, 1.0, 0.0); // yellow for medium occlusion
+			} else if (occlusion < 0.8) {
+				return vec3(1.0, 0.5, 0.0); // orange for medium-high occlusion
+			} else if (occlusion < 1.0){
+				return vec3(1.0, 0.0, 0.0); // red for high occlusion
+			} else if (occlusion == 1.0){
+				return vec3(0.0, 0.0, 0.0); // black for high occlusion
+			}
+			else {
+				return vec3(1.0, 1.0, 1.0);
+			}
+		}
+
 void main(void)
 {
-    vec4 positionEC = pixelToEye(gl_FragCoord.xy);
 
-    // Exit if we are too close to the back of the frustum, where the depth value is invalid.
-    float maxValidDepth = czm_currentFrustum.y - lengthCap;
-    if (-positionEC.z > maxValidDepth)
-    {
-        out_FragColor = vec4(1.0);
-        return;
+    float depth = getDepth(gl_FragCoord.xy);
+    // vec3 color = vec3(depth);
+    // out_FragColor = vec4(color, 1.0);
+    // return;
+
+    if ( depth == 1.0 ) {
+        out_FragColor = vec4( 1.0 );
+    } else {
+        float viewZ = getViewZ( depth );
+        
+        vec4 viewPosition = pixelToEye(gl_FragCoord.xy);
+        vec3 viewNormal = getNormalXEdge(viewPosition.xyz);
+
+        float Sx = (float(kernelRadius) / 2.0) / czm_viewport.z;
+        float Sy = (float(kernelRadius) / 2.0) / czm_viewport.w;
+
+        float kernelDiagonal = sqrt(Sx * Sx + Sy * Sy);
+		
+        vec2 uv = gl_FragCoord.xy / czm_viewport.zw; // Convert fragment coordinates to UV space
+        vec2 noiseUV = uv * czm_viewport.zw / 1024.0; // Adjust UVs based on resolution
+
+        vec3 random = 2.0 * (texture(randomTexture, noiseUV).rgb - 0.5);
+
+        vec3 tangent = normalize( random - viewNormal * dot( random, viewNormal ) );
+		vec3 bitangent = cross( viewNormal, tangent );
+
+        mat3 kernelMatrix = mat3( tangent, bitangent, viewNormal );
+
+        float AOScale = abs(viewZ) * kernelDiagonal * 4.0;
+		float occlusion = 0.0;
+
+        for ( int i = 0; i < KERNEL_SIZE; i ++ ) {
+
+			vec3 sampleVector = kernelMatrix * generateSampleKernel(i, KERNEL_SIZE);
+			vec3 samplePoint = viewPosition.xyz + (sampleVector * AOScale);
+
+			if (length(sampleVector - samplePoint) > AOScale * 0.05) {
+
+				vec2 samplePointUv = projectCameraPositionToScreenSpace(samplePoint);
+
+				float sampleDepth = getDepth( samplePointUv );
+					
+				vec3 sampleViewPosition = sampleDepthToCameraPosition(samplePointUv, sampleDepth);
+
+				float viewDistance = length( sampleViewPosition - viewPosition.xyz ) / AOScale;
+						
+				vec3 sampleDirection = normalize(sampleViewPosition - viewPosition.xyz);
+				float lightIntensity = clamp(dot(sampleDirection, normalize(viewNormal)), 0.0, 1.0);
+				float distanceFadeout = clamp(1.0 - (viewDistance - 0.0) / 3.0, 0.0, 1.0);
+
+				float sampleOcclusion = lightIntensity * distanceFadeout  / float(KERNEL_SIZE);
+        		occlusion += sampleOcclusion;
+
+               
+			}
+		}
+        float innerRadius = AOScale;
+		float outerRadius = innerRadius * 3.0;
+				
+		float kHigherOcclusion = 1.0;
+		occlusion = clamp(occlusion / kHigherOcclusion, 0.0, 1.0);
+		occlusion = pow(1.0 - occlusion, intensity);
+
+        out_FragColor = vec4(vec3(occlusion), 1.0);	 
+
+        vec3 debugColor = debugOcclusionColor(occlusion);
+		// out_FragColor = vec4( vec3( debugColor ), 1.0 );
     }
-
-    vec3 normalEC = getNormalXEdge(positionEC.xyz);
-    float gaussianVariance = lengthCap * sqrt(-positionEC.z);
-    // Choose a step length such that the marching stops just before 3 * variance.
-    float stepLength = 3.0 * gaussianVariance / (float(stepCount) + 1.0);
-    float metersPerPixel = czm_metersPerPixel(positionEC, 1.0);
-    // Minimum step is 1 pixel to avoid double sampling
-    float pixelsPerStep = max(stepLength / metersPerPixel, 1.0);
-    stepLength = pixelsPerStep * metersPerPixel;
-
-    float angleStepScale = 1.0 / float(directionCount);
-    float angleStep = angleStepScale * czm_twoPi;
-    float cosStep = cos(angleStep);
-    float sinStep = sin(angleStep);
-    mat2 rotateStep = mat2(cosStep, sinStep, -sinStep, cosStep);
-
-    // Initial sampling direction (different for each pixel)
-    const float randomTextureSize = 255.0;
-    vec2 randomTexCoord = fract(gl_FragCoord.xy / randomTextureSize);
-    float randomVal = texture(randomTexture, randomTexCoord).x;
-    vec2 sampleDirection = vec2(cos(angleStep * randomVal), sin(angleStep * randomVal));
-
-    float ao = 0.0;
-    // Loop over sampling directions
-#if __VERSION__ == 300
-    for (int i = 0; i < directionCount; i++)
-    {
-#else
-    for (int i = 0; i < 16; i++)
-    {
-        if (i >= directionCount) {
-            break;
-        }
-#endif
-        sampleDirection = rotateStep * sampleDirection;
-
-        float localAO = 0.0;
-        vec2 radialStep = pixelsPerStep * sampleDirection;
-
-#if __VERSION__ == 300
-        for (int j = 0; j < stepCount; j++)
-        {
-#else
-        for (int j = 0; j < 64; j++)
-        {
-            if (j >= stepCount) {
-                break;
-            }
-#endif
-            // Step along sampling direction, away from output pixel
-            vec2 samplePixel = floor(gl_FragCoord.xy + float(j + 1) * radialStep) + vec2(0.5);
-
-            // Exit if we stepped off the screen
-            if (clamp(samplePixel, vec2(0.0), czm_viewport.zw) != samplePixel) {
-                break;
-            }
-
-            // Compute step vector from output point to sampled point
-            vec4 samplePositionEC = pixelToEye(samplePixel);
-            vec3 stepVector = samplePositionEC.xyz - positionEC.xyz;
-
-            // Estimate the angle from the surface normal.
-            float dotVal = clamp(dot(normalEC, normalize(stepVector)), 0.0, 1.0);
-            dotVal = czm_branchFreeTernary(dotVal > bias, dotVal, 0.0);
-            dotVal = czm_branchFreeTernary(-samplePositionEC.z <= maxValidDepth, dotVal, 0.0);
-
-            // Weight contribution based on the distance from the output point
-            float sampleDistance = length(stepVector);
-            float weight = gaussian(sampleDistance, gaussianVariance);
-            localAO += weight * dotVal;
-        }
-        ao += localAO;
-    }
-
-    ao *= angleStepScale * stepLength;
-    ao = 1.0 - clamp(ao, 0.0, 1.0);
-    ao = pow(ao, intensity);
-    out_FragColor = vec4(vec3(ao), 1.0);
 }

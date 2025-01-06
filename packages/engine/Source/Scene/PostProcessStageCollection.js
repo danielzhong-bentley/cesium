@@ -37,6 +37,7 @@ function PostProcessStageCollection() {
   const ao = PostProcessStageLibrary.createAmbientOcclusionStage();
   const bloom = PostProcessStageLibrary.createBloomStage();
 
+
   // Auto-exposure is currently disabled because most shaders output a value in [0.0, 1.0].
   // Some shaders, such as the atmosphere and ground atmosphere, output values slightly over 1.0.
   this._autoExposureEnabled = false;
@@ -78,11 +79,6 @@ function PostProcessStageCollection() {
   this._previousActiveStages = [];
 
   this._randomTexture = undefined; // For AO
-
-  const that = this;
-  ao.uniforms.randomTexture = function () {
-    return that._randomTexture;
-  };
 
   this._ao = ao;
   this._bloom = bloom;
@@ -639,22 +635,56 @@ PostProcessStageCollection.prototype.update = function (
     this._randomTexture.destroy();
     this._randomTexture = undefined;
   }
+  function generateBlueNoise(width, height) {
+    const size = width * height * 3; // RGB channels
+    const noiseData = new Uint8Array(size);
+  
+    function halton(index, base) {
+      let result = 0.0;
+      let f = 1.0 / base;
+      let i = index;
+      while (i > 0) {
+        result += f * (i % base);
+        i = Math.floor(i / base);
+        f /= base;
+      }
+      return result;
+    }
+  
+    // Generate blue noise using Halton R2 low-discrepancy sequence
+    let index = 0;
+    for (let y = 0; y < height; ++y) {
+      for (let x = 0; x < width; ++x) {
+        const r = halton(index, 2) * 255; // R channel
+        const g = halton(index, 3) * 255; // G channel (optional)
+        const b = halton(index, 5) * 255; // B channel (optional)
+  
+        const i = (y * width + x) * 3;
+        noiseData[i] = r;
+        noiseData[i + 1] = g;
+        noiseData[i + 2] = b;
+  
+        index++;
+      }
+    }
+  
+    return noiseData;
+  }
 
   if (!defined(this._randomTexture) && aoEnabled) {
-    const length = 256 * 256 * 3;
-    const random = new Uint8Array(length);
-    for (let i = 0; i < length; i += 3) {
-      random[i] = Math.floor(Math.random() * 255.0);
-    }
-
+    const width = 256;
+    const height = 256;
+  
+    const noiseData = generateBlueNoise(width, height);
+  
     this._randomTexture = new Texture({
       context: context,
       pixelFormat: PixelFormat.RGB,
       pixelDatatype: PixelDatatype.UNSIGNED_BYTE,
       source: {
-        arrayBufferView: random,
-        width: 256,
-        height: 256,
+        arrayBufferView: noiseData,
+        width: width,
+        height: height,
       },
       sampler: new Sampler({
         wrapS: TextureWrap.REPEAT,
@@ -663,7 +693,10 @@ PostProcessStageCollection.prototype.update = function (
         magnificationFilter: TextureMagnificationFilter.NEAREST,
       }),
     });
+  
+    console.log("Procedurally generated blue noise texture created successfully:", this._randomTexture);
   }
+  
 
   this._textureCache.update(context);
 
